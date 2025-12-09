@@ -32,10 +32,12 @@ MeCabManager::MeCabManager(bool enableCaboCha)
 }
 
 MeCabManager::~MeCabManager() {
+#ifdef MOZUKU_ENABLE_CABOCHA
   if (cabocha_parser_) {
     cabocha_destroy(cabocha_parser_);
     cabocha_parser_ = nullptr;
   }
+#endif
   if (mecab_tagger_) {
     delete mecab_tagger_;
     mecab_tagger_ = nullptr;

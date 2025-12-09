@@ -97,11 +97,10 @@ jobs:
           ./configure --prefix=/mingw64 --with-charset=utf8 --with-mecab-config=/mingw64/bin/mecab-config
           make -j2
           make install
-          if [ ! -f /mingw64/libexec/mecab/mecab-dict-index ]; then
-            mkdir -p /mingw64/libexec/mecab
-            if [ -f /mingw64/bin/mecab-dict-index ]; then
-              cp /mingw64/bin/mecab-dict-index /mingw64/libexec/mecab/mecab-dict-index
-            fi
+          mkdir -p /mingw64/libexec/mecab
+          bin_path="$(find /mingw64 -name 'mecab-dict-index*' -maxdepth 4 | head -n1)"
+          if [ -n "$bin_path" ]; then
+            cp "$bin_path" /mingw64/libexec/mecab/mecab-dict-index
           fi
 
       - name: Build CRF++ (Ubuntu)
