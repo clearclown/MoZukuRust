@@ -84,6 +84,10 @@ jobs:
           ./configure --prefix=/mingw64 --with-charset=UTF8 LIBS="-liconv"
           make -j2
           make install
+          mkdir -p /mingw64/libexec/mecab
+          if [ -f /mingw64/bin/mecab-dict-index ]; then
+            cp /mingw64/bin/mecab-dict-index /mingw64/libexec/mecab/mecab-dict-index
+          fi
 
       - name: Build MeCab IPADIC (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
@@ -151,14 +155,14 @@ jobs:
         if: ${{ matrix.os != 'windows-latest' }}
         run: |
           cd mozuku-lsp
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_CABOCHA=OFF
 
       - name: Configure (CMake, Windows)
         if: ${{ matrix.os == 'windows-latest' }}
         shell: msys2 {0}
         run: |
           cd mozuku-lsp
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_CABOCHA=OFF
 
       - name: Build LSP (CMake, non-Windows)
         if: ${{ matrix.os != 'windows-latest' }}
