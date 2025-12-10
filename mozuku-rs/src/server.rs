@@ -8,7 +8,9 @@ use tower_lsp::{Client, LanguageServer};
 
 use crate::analyzer::MorphologicalAnalyzer;
 use crate::checker::GrammarChecker;
+use crate::config::Config;
 use crate::extractor::{FileType, TextExtractor};
+use crate::llm::{LlmClient, ProofreadRequest};
 
 /// Document state stored for each open file
 #[derive(Debug, Clone)]
@@ -25,13 +27,19 @@ pub struct MozukuServer {
     analyzer: Arc<MorphologicalAnalyzer>,
     checker: Arc<GrammarChecker>,
     extractor: Arc<TextExtractor>,
+    /// Configuration (stored for future use with dynamic checker settings)
+    #[allow(dead_code)]
+    config: Arc<Config>,
+    llm_client: Arc<LlmClient>,
 }
 
 impl MozukuServer {
     pub fn new(client: Client) -> Self {
+        let config = Config::load_from_default();
         let analyzer = Arc::new(MorphologicalAnalyzer::new().expect("Failed to initialize analyzer"));
         let checker = Arc::new(GrammarChecker::new(analyzer.clone()));
         let extractor = Arc::new(TextExtractor::new());
+        let llm_client = Arc::new(LlmClient::new(config.clone()));
 
         Self {
             client,
@@ -39,6 +47,8 @@ impl MozukuServer {
             analyzer,
             checker,
             extractor,
+            config: Arc::new(config),
+            llm_client,
         }
     }
 
@@ -144,6 +154,17 @@ impl LanguageServer for MozukuServer {
                 ),
                 // Hover support for word information
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                // Code actions for AI suggestions
+                code_action_provider: Some(CodeActionProviderCapability::Options(
+                    CodeActionOptions {
+                        code_action_kinds: Some(vec![
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR_REWRITE,
+                        ]),
+                        resolve_provider: Some(true),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -249,6 +270,227 @@ impl LanguageServer for MozukuServer {
 
         Ok(None)
     }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = &params.text_document.uri;
+        let range = params.range;
+
+        let documents = self.documents.read().await;
+        let doc = match documents.get(uri) {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+
+        // Get diagnostics in the range
+        let diagnostics_in_range: Vec<_> = params
+            .context
+            .diagnostics
+            .iter()
+            .filter(|d| ranges_overlap(&d.range, &range))
+            .collect();
+
+        if diagnostics_in_range.is_empty() {
+            return Ok(None);
+        }
+
+        let mut actions = Vec::new();
+
+        for diag in diagnostics_in_range {
+            // Get the text at the diagnostic range
+            let text = self.get_text_at_range(&doc.content, &diag.range);
+
+            // Create quick fix action
+            let quick_fix = CodeAction {
+                title: format!("修正: {}", diag.message),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                is_preferred: Some(true),
+                data: Some(serde_json::json!({
+                    "uri": uri.to_string(),
+                    "range": diag.range,
+                    "text": text,
+                    "message": diag.message,
+                    "type": "quickfix"
+                })),
+                ..Default::default()
+            };
+            actions.push(CodeActionOrCommand::CodeAction(quick_fix));
+
+            // If LLM is available, add AI suggestion action
+            if self.llm_client.is_available() {
+                let ai_action = CodeAction {
+                    title: format!("🤖 AIによる修正提案: {}", diag.message),
+                    kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                    diagnostics: Some(vec![diag.clone()]),
+                    is_preferred: Some(false),
+                    data: Some(serde_json::json!({
+                        "uri": uri.to_string(),
+                        "range": diag.range,
+                        "text": text,
+                        "message": diag.message,
+                        "type": "ai_suggestion"
+                    })),
+                    ..Default::default()
+                };
+                actions.push(CodeActionOrCommand::CodeAction(ai_action));
+            }
+        }
+
+        Ok(Some(actions))
+    }
+
+    async fn code_action_resolve(&self, mut action: CodeAction) -> Result<CodeAction> {
+        let data = match action.data.as_ref() {
+            Some(data) => data.clone(),
+            None => return Ok(action),
+        };
+
+        let uri_str = data.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+        let text = data.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let action_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let range: Range = serde_json::from_value(data.get("range").cloned().unwrap_or_default())
+            .unwrap_or_default();
+
+        let uri = match Url::parse(uri_str) {
+            Ok(uri) => uri,
+            Err(_) => return Ok(action),
+        };
+
+        // Generate the edit based on action type
+        let new_text = if action_type == "ai_suggestion" {
+            // Use LLM to generate suggestion
+            match self
+                .llm_client
+                .proofread(ProofreadRequest {
+                    text: text.to_string(),
+                    context: None,
+                    issue: Some(message.to_string()),
+                })
+                .await
+            {
+                Ok(response) => {
+                    // Update action title with explanation
+                    action.title = format!(
+                        "🤖 {} (確信度: {:.0}%)",
+                        response.explanation,
+                        response.confidence * 100.0
+                    );
+                    response.suggestion
+                }
+                Err(e) => {
+                    tracing::warn!("LLM request failed: {}", e);
+                    return Ok(action);
+                }
+            }
+        } else {
+            // For quickfix, extract suggestion from message
+            self.extract_suggestion_from_message(text, message)
+        };
+
+        // Create the workspace edit
+        let edit = WorkspaceEdit {
+            changes: Some(HashMap::from([(
+                uri,
+                vec![TextEdit {
+                    range,
+                    new_text,
+                }],
+            )])),
+            ..Default::default()
+        };
+
+        action.edit = Some(edit);
+        Ok(action)
+    }
+}
+
+impl MozukuServer {
+    /// Get text at a specific range
+    fn get_text_at_range(&self, content: &str, range: &Range) -> String {
+        let lines: Vec<&str> = content.lines().collect();
+
+        let start_line = range.start.line as usize;
+        let end_line = range.end.line as usize;
+
+        if start_line >= lines.len() {
+            return String::new();
+        }
+
+        if start_line == end_line {
+            // Single line
+            let line = lines[start_line];
+            let start_char = range.start.character as usize;
+            let end_char = range.end.character as usize;
+            line.chars()
+                .skip(start_char)
+                .take(end_char - start_char)
+                .collect()
+        } else {
+            // Multiple lines
+            let mut result = String::new();
+
+            // First line
+            if let Some(line) = lines.get(start_line) {
+                result.push_str(
+                    &line
+                        .chars()
+                        .skip(range.start.character as usize)
+                        .collect::<String>(),
+                );
+            }
+
+            // Middle lines
+            for i in start_line + 1..end_line {
+                if let Some(line) = lines.get(i) {
+                    result.push('\n');
+                    result.push_str(line);
+                }
+            }
+
+            // Last line
+            if let Some(line) = lines.get(end_line) {
+                result.push('\n');
+                result.push_str(
+                    &line
+                        .chars()
+                        .take(range.end.character as usize)
+                        .collect::<String>(),
+                );
+            }
+
+            result
+        }
+    }
+
+    /// Extract suggestion from diagnostic message
+    fn extract_suggestion_from_message(&self, original: &str, message: &str) -> String {
+        // Common patterns: 「X」→「Y」 or X→Y
+        if let Some(arrow_idx) = message.find('→') {
+            let after = &message[arrow_idx + '→'.len_utf8()..];
+
+            // Extract text between 「」
+            if let Some(start) = after.find('「') {
+                if let Some(end) = after[start + '「'.len_utf8()..].find('」') {
+                    return after[start + '「'.len_utf8()..start + '「'.len_utf8() + end].to_string();
+                }
+            }
+
+            // Or just return trimmed text after arrow
+            return after.trim().to_string();
+        }
+
+        // If no suggestion found, return original
+        original.to_string()
+    }
+}
+
+/// Check if two ranges overlap
+fn ranges_overlap(r1: &Range, r2: &Range) -> bool {
+    !(r1.end.line < r2.start.line
+        || r1.start.line > r2.end.line
+        || (r1.end.line == r2.start.line && r1.end.character < r2.start.character)
+        || (r1.start.line == r2.end.line && r1.start.character > r2.end.character))
 }
 
 #[cfg(test)]
@@ -289,5 +531,57 @@ mod tests {
     fn test_detect_file_type_no_extension() {
         let uri = Url::parse("file:///path/to/Makefile").unwrap();
         assert_eq!(MozukuServer::detect_file_type(&uri), FileType::PlainText);
+    }
+
+    #[test]
+    fn test_ranges_overlap_same_line() {
+        let r1 = Range {
+            start: Position { line: 0, character: 0 },
+            end: Position { line: 0, character: 10 },
+        };
+        let r2 = Range {
+            start: Position { line: 0, character: 5 },
+            end: Position { line: 0, character: 15 },
+        };
+        assert!(ranges_overlap(&r1, &r2));
+    }
+
+    #[test]
+    fn test_ranges_overlap_no_overlap() {
+        let r1 = Range {
+            start: Position { line: 0, character: 0 },
+            end: Position { line: 0, character: 5 },
+        };
+        let r2 = Range {
+            start: Position { line: 0, character: 10 },
+            end: Position { line: 0, character: 15 },
+        };
+        assert!(!ranges_overlap(&r1, &r2));
+    }
+
+    #[test]
+    fn test_ranges_overlap_different_lines() {
+        let r1 = Range {
+            start: Position { line: 1, character: 0 },
+            end: Position { line: 3, character: 10 },
+        };
+        let r2 = Range {
+            start: Position { line: 2, character: 5 },
+            end: Position { line: 2, character: 15 },
+        };
+        assert!(ranges_overlap(&r1, &r2));
+    }
+
+    #[test]
+    fn test_ranges_overlap_contained() {
+        let r1 = Range {
+            start: Position { line: 0, character: 0 },
+            end: Position { line: 5, character: 0 },
+        };
+        let r2 = Range {
+            start: Position { line: 2, character: 0 },
+            end: Position { line: 3, character: 0 },
+        };
+        assert!(ranges_overlap(&r1, &r2));
     }
 }

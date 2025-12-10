@@ -6,4 +6,5 @@ pub mod analyzer;
 pub mod checker;
 pub mod config;
 pub mod extractor;
+pub mod llm;
 pub mod server;
