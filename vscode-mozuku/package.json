@@ -1,8 +1,8 @@
 {
   "name": "mozuku",
   "displayName": "MoZuku",
-  "description": "Japanese LSP: diagnostics + semantic tokens. Requires system MeCab/CaboCha libraries.",
-  "version": "0.1.0",
+  "description": "Japanese proofreading LSP with LLM integration. Supports Rust (recommended) and C++ backends.",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.103.0"
   },
@@ -54,8 +54,13 @@
       "properties": {
         "mozuku.serverPath": {
           "type": "string",
-          "default": "./bin/mozuku-lsp",
-          "description": "Path to the MoZuku LSP server binary (relative to extension root)"
+          "default": "",
+          "description": "Path to the MoZuku LSP server binary. Leave empty for auto-detection (prefers Rust version)."
+        },
+        "mozuku.preferRust": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefer Rust server (mozuku-rs) over C++ server (mozuku-lsp) when auto-detecting"
         },
         "mozuku.mecab.dicdir": {
           "type": "string",

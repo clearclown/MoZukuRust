@@ -356,13 +356,20 @@ export async function startClient(
 
 function resolveServerPath(ctx: vscode.ExtensionContext, configured: string): string {
   const isWindows = process.platform === 'win32';
-  const exeName = isWindows ? 'mozuku-lsp.exe' : 'mozuku-lsp';
+  const config = vscode.workspace.getConfiguration('mozuku');
+  const preferRust = config.get<boolean>('preferRust', true);
+
+  // Determine binary names based on preference
+  const rustExeName = isWindows ? 'mozuku-rs.exe' : 'mozuku-rs';
+  const cppExeName = isWindows ? 'mozuku-lsp.exe' : 'mozuku-lsp';
+  const exeNames = preferRust ? [rustExeName, cppExeName] : [cppExeName, rustExeName];
 
   const isDebug = true;
 
   if (isDebug) {
     console.log('[MoZuku] サーバーパスを解決中:', {
       configured,
+      preferRust,
       extensionPath: ctx.extensionUri.fsPath,
       workspaceFolders: vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath)
     });
@@ -379,47 +386,61 @@ function resolveServerPath(ctx: vscode.ExtensionContext, configured: string): st
     add('設定済み', configured);
   }
 
-  // 2) 環境変数 MOZUKU_LSP
+  // 2) 環境変数 MOZUKU_LSP / MOZUKU_RS
+  add('環境変数 MOZUKU_RS', process.env.MOZUKU_RS);
   add('環境変数 MOZUKU_LSP', process.env.MOZUKU_LSP);
 
-  // 3) PATH 上のコマンド
+  // 3) PATH 上のコマンド (prefer order based on setting)
   const pathEnv = process.env.PATH || '';
-  for (const dir of pathEnv.split(path.delimiter)) {
-    if (!dir) { continue; }
-    add('PATH', path.join(dir, exeName));
+  for (const exeName of exeNames) {
+    for (const dir of pathEnv.split(path.delimiter)) {
+      if (!dir) { continue; }
+      add('PATH', path.join(dir, exeName));
+    }
   }
 
   // 4) 既知の標準インストール先
   const home = process.env.HOME || process.env.USERPROFILE;
-  if (home) {
-    add('ユーザーインストール', path.join(home, '.mozuku', 'bin', exeName));
-  }
-  if (isWindows) {
-    const localAppData = process.env.LOCALAPPDATA;
-    if (localAppData) {
-      add('ユーザーインストール', path.join(localAppData, 'mozuku', 'bin', exeName));
+  for (const exeName of exeNames) {
+    if (home) {
+      add('ユーザーインストール', path.join(home, '.mozuku', 'bin', exeName));
     }
-  } else {
-    add('システム /usr/local/bin', path.join('/usr/local/bin', exeName));
+    if (isWindows) {
+      const localAppData = process.env.LOCALAPPDATA;
+      if (localAppData) {
+        add('ユーザーインストール', path.join(localAppData, 'mozuku', 'bin', exeName));
+      }
+    } else {
+      add('システム /usr/local/bin', path.join('/usr/local/bin', exeName));
+    }
   }
 
   // 5) 拡張同梱バイナリ
-  const primaryPackaged = vscode.Uri.joinPath(ctx.extensionUri, 'bin', exeName).fsPath;
-  add('パッケージ済み', primaryPackaged);
+  for (const exeName of exeNames) {
+    const primaryPackaged = vscode.Uri.joinPath(ctx.extensionUri, 'bin', exeName).fsPath;
+    add('パッケージ済み', primaryPackaged);
 
-  const plat = process.platform; const arch = process.arch;
-  const legacyPackaged = vscode.Uri.joinPath(ctx.extensionUri, 'server', 'bin', `${plat}-${arch}`, exeName).fsPath;
-  add('パッケージ済み', legacyPackaged);
+    const plat = process.platform; const arch = process.arch;
+    const legacyPackaged = vscode.Uri.joinPath(ctx.extensionUri, 'server', 'bin', `${plat}-${arch}`, exeName).fsPath;
+    add('パッケージ済み', legacyPackaged);
+  }
 
   // 6) ワークスペース/開発のビルド成果物
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (workspaceRoot) {
-    add('ワークスペース-build', path.join(workspaceRoot, 'build', exeName));
-    add('ワークスペース-lsp', path.join(workspaceRoot, 'mozuku-lsp', 'build', exeName));
+    // Rust build (cargo)
+    add('ワークスペース-rs-release', path.join(workspaceRoot, 'mozuku-rs', 'target', 'release', rustExeName));
+    add('ワークスペース-rs-debug', path.join(workspaceRoot, 'mozuku-rs', 'target', 'debug', rustExeName));
+    // C++ build (cmake)
+    add('ワークスペース-lsp', path.join(workspaceRoot, 'mozuku-lsp', 'build', cppExeName));
+    add('ワークスペース-build', path.join(workspaceRoot, 'build', cppExeName));
   }
 
-  add('開発-ルート', path.join(ctx.extensionUri.fsPath, '..', 'build', exeName));
-  add('開発-サブ', path.join(ctx.extensionUri.fsPath, '..', 'mozuku-lsp', 'build', exeName));
+  // Development paths relative to extension
+  add('開発-rs-release', path.join(ctx.extensionUri.fsPath, '..', 'mozuku-rs', 'target', 'release', rustExeName));
+  add('開発-rs-debug', path.join(ctx.extensionUri.fsPath, '..', 'mozuku-rs', 'target', 'debug', rustExeName));
+  add('開発-lsp', path.join(ctx.extensionUri.fsPath, '..', 'mozuku-lsp', 'build', cppExeName));
+  add('開発-ルート', path.join(ctx.extensionUri.fsPath, '..', 'build', cppExeName));
 
   for (const candidate of candidates) {
     if (fs.existsSync(candidate.path)) {
@@ -432,7 +453,7 @@ function resolveServerPath(ctx: vscode.ExtensionContext, configured: string): st
     }
   }
 
-  const fallback = configured || exeName;
+  const fallback = configured || exeNames[0];
   if (isDebug) {
     console.log('[MoZuku] フォールバックパスを使用:', fallback);
   }

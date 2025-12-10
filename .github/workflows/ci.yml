@@ -7,7 +7,53 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  # Rust LSP Server (mozuku-rs) - recommended
+  rust-build:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            mozuku-rs/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        working-directory: mozuku-rs
+        run: cargo build --release
+
+      - name: Test
+        working-directory: mozuku-rs
+        run: cargo test --lib
+
+      - name: Archive Rust binary
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mozuku-rs-${{ matrix.os }}
+          path: |
+            mozuku-rs/target/release/mozuku-rs
+            mozuku-rs/target/release/mozuku-rs.exe
+
+  # C++ LSP Server (mozuku-lsp) - legacy
+  cpp-build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
