@@ -4,7 +4,7 @@
 
 ## プロジェクト概要
 
-MoZuku は日本語校正のための Language Server Protocol (LSP) 実装である。C++版からRust版への移行を計画しており、LLM連携機能を強化した次世代の日本語校正ツールを目指している。
+MoZuku は日本語校正のための Language Server Protocol (LSP) 実装である。C++版からRust版への移行を進めており、LLM連携機能を強化した次世代の日本語校正ツールを目指している。
 
 ### プロジェクトの目的
 
@@ -22,15 +22,22 @@ MoZuku は日本語校正のための Language Server Protocol (LSP) 実装で�
 
 ### 現在の状態
 
-- **C++版 LSP サーバー**: `mozuku-lsp/` に実装済み
+- **Rust版 LSP サーバー**: `mozuku-rs/` に実装中（Phase 1 完了）
+- **C++版 LSP サーバー**: `mozuku-lsp/` に実装済み（レガシー）
 - **VS Code 拡張機能**: `vscode-mozuku/` に実装済み
-- **Rust版**: 未着手（README.mdのロードマップ参照）
 
 ## ディレクトリ構造
 
 ```
 MoZukuRust/
-├── mozuku-lsp/          # C++ LSP サーバー
+├── mozuku-rs/           # Rust LSP サーバー（推奨）
+│   ├── src/
+│   │   ├── main.rs      # エントリーポイント
+│   │   ├── server.rs    # LSP サーバー実装
+│   │   ├── analyzer.rs  # Lindera形態素解析
+│   │   └── checker.rs   # 文法チェック
+│   └── Cargo.toml
+├── mozuku-lsp/          # C++ LSP サーバー（レガシー）
 │   ├── include/         # ヘッダファイル
 │   ├── src/             # ソースファイル
 │   └── third-party/     # 依存ライブラリ
@@ -43,7 +50,18 @@ MoZukuRust/
 
 ## ビルド手順
 
-### C++ LSP サーバー (mozuku-lsp)
+### Rust LSP サーバー (mozuku-rs) - 推奨
+
+```bash
+cd mozuku-rs
+cargo build --release
+```
+
+**依存関係**: なし（Linderaの辞書がバイナリに埋め込まれる）
+
+生成バイナリ: `target/release/mozuku-rs`
+
+### C++ LSP サーバー (mozuku-lsp) - レガシー
 
 ```bash
 cd mozuku-lsp
@@ -52,7 +70,7 @@ cmake ..
 make
 ```
 
-**依存関係**: MeCab, CaboChが必要（Rust版では不要になる予定）
+**依存関係**: MeCab, CaboChaが必要
 
 ### VS Code 拡張機能
 
@@ -64,7 +82,16 @@ npm run compile
 
 ## 重要なコンポーネント
 
-### mozuku-lsp (C++)
+### mozuku-rs (Rust) - 推奨
+
+| ファイル | 役割 |
+|---------|------|
+| `main.rs` | LSP サーバー起動、ログ初期化 |
+| `server.rs` | LSP プロトコル処理、ドキュメント管理 |
+| `analyzer.rs` | Lindera形態素解析、ホバー情報、セマンティックトークン |
+| `checker.rs` | 文法チェック（ら抜き、い抜き、二重助詞等） |
+
+### mozuku-lsp (C++) - レガシー
 
 | ファイル | 役割 |
 |---------|------|
@@ -86,27 +113,44 @@ npm run compile
 
 ### コーディング規約
 
+- Rust: `cargo fmt` と `cargo clippy` に準拠
 - C++: `.clang-format` に準拠
 - TypeScript: `eslint.config.mjs` に準拠
 
 ### 日本語処理の注意点
 
 - UTF-8 エンコーディングを前提とする
-- LSP では UTF-16 オフセットを使用するため、変換処理に注意（`utf16.cpp/hpp`）
+- LSP では UTF-16 オフセットを使用するため、変換処理に注意
 - 日本語文字列の長さ計算は文字数ベースで行う
 
-### Rust 移行計画
+### Rust版の実装状況
 
-Phase 1〜4 のロードマップに従って移行を進める（README.md参照）。主な変更点：
-
-1. **MeCab → Lindera**: Pure Rust形態素解析器への置き換え
-2. **tree-sitter 統合**: コメント抽出の汎用化
-3. **tower-lsp**: Rust用LSPフレームワークの採用
-4. **LLM API 連携**: OpenAI/Anthropic API との非同期通信
+- [x] **Phase 1: Rust 基盤の確立**
+  - tower-lsp を用いた LSP サーバーの構築
+  - Lindera 統合による形態素解析の実装
+  - 基礎的な文法チェック機能（ら抜き、い抜き、二重助詞）
+  - セマンティックトークン（品詞ハイライト）
+  - ホバー情報（品詞詳細表示）
+- [ ] **Phase 2: ドキュメント構造解析**
+  - tree-sitter の統合
+  - コメント/Markdown/LaTeX からのテキスト抽出
+- [ ] **Phase 3: ルールベース診断の拡充**
+  - 追加の文法チェックルール
+- [ ] **Phase 4: LLM 統合**
+  - 設定ファイル (`mozuku.toml`) による API キー管理
+  - 非同期での LLM 問い合わせ
+  - Code Action による AI 修正の適用
 
 ## テスト
 
-### VS Code 拡張機能のテスト
+### Rust LSP サーバー
+
+```bash
+cd mozuku-rs
+cargo test
+```
+
+### VS Code 拡張機能
 
 ```bash
 cd vscode-mozuku
@@ -119,6 +163,6 @@ GitHub Actions で CI を実行（`.github/workflows/ci.yml`）。
 
 ## 関連リンク
 
-- [Lindera](https://github.com/lindera-morphology/lindera) - Pure Rust形態素解析器
+- [Lindera](https://github.com/lindera/lindera) - Pure Rust形態素解析器
 - [tower-lsp](https://github.com/ebkalderon/tower-lsp) - Rust LSPフレームワーク
 - [tree-sitter](https://tree-sitter.github.io/tree-sitter/) - パーサージェネレーター
