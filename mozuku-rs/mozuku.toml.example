@@ -1,0 +1,50 @@
+# MoZuku 設定ファイル
+# このファイルを mozuku.toml にリネームして使用してください
+
+# LLM連携設定
+[llm]
+# プロバイダー: "claude", "openai", "none"
+# "none" の場合、LLM機能は無効化されます
+provider = "none"
+
+# APIキー
+# 環境変数 ANTHROPIC_API_KEY または OPENAI_API_KEY でも設定可能
+# api_key = "sk-..."
+
+# モデル名（省略時はデフォルト値を使用）
+# Claude: claude-3-5-sonnet-20241022
+# OpenAI: gpt-4o
+# model = "claude-3-5-sonnet-20241022"
+
+# カスタムエンドポイント（省略可）
+# ローカルLLMサーバーやプロキシを使用する場合に設定
+# base_url = "https://api.anthropic.com"
+
+# レスポンスの最大トークン数
+max_tokens = 1024
+
+# 文法チェック設定
+[checker]
+# ら抜き言葉の検出 (食べれる → 食べられる)
+ra_nuki = true
+
+# い抜き言葉の検出 (食べてる → 食べている)
+i_nuki = true
+
+# 助詞の重複検出 (私はは → 私は)
+double_particle = true
+
+# 二重敬語の検出 (おっしゃられる → おっしゃる)
+double_honorific = true
+
+# 冗長表現の検出 (することができる → できる)
+redundant_expression = true
+
+# 連続文末の検出 (です。です。です。)
+consecutive_endings = true
+
+# たり並列不完全の検出 (歩いたり走る → 歩いたり走ったり)
+tari_parallel = true
+
+# の連続検出 (私の友達の本の内容)
+consecutive_no = true

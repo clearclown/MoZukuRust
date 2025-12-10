@@ -22,7 +22,7 @@ MoZuku は日本語校正のための Language Server Protocol (LSP) 実装で�
 
 ### 現在の状態
 
-- **Rust版 LSP サーバー**: `mozuku-rs/` に実装中（Phase 3 完了）
+- **Rust版 LSP サーバー**: `mozuku-rs/` に実装完了（Phase 1-4 全完了）
 - **C++版 LSP サーバー**: `mozuku-lsp/` に実装済み（レガシー）
 - **VS Code 拡張機能**: `vscode-mozuku/` に実装済み
 
@@ -34,10 +34,12 @@ MoZukuRust/
 │   ├── src/
 │   │   ├── main.rs      # エントリーポイント
 │   │   ├── lib.rs       # ライブラリモジュール定義
-│   │   ├── server.rs    # LSP サーバー実装
+│   │   ├── server.rs    # LSP サーバー実装、Code Action
 │   │   ├── analyzer.rs  # Lindera形態素解析
 │   │   ├── checker.rs   # 文法チェック
-│   │   └── extractor.rs # tree-sitterテキスト抽出
+│   │   ├── extractor.rs # tree-sitterテキスト抽出
+│   │   ├── config.rs    # 設定管理 (mozuku.toml)
+│   │   └── llm.rs       # LLMクライアント (Claude/OpenAI)
 │   └── Cargo.toml
 ├── mozuku-lsp/          # C++ LSP サーバー（レガシー）
 │   ├── include/         # ヘッダファイル
@@ -90,10 +92,12 @@ npm run compile
 |---------|------|
 | `main.rs` | LSP サーバー起動、ログ初期化 |
 | `lib.rs` | ライブラリモジュール公開 |
-| `server.rs` | LSP プロトコル処理、ドキュメント管理、ファイルタイプ検出 |
+| `server.rs` | LSP プロトコル処理、ドキュメント管理、Code Action |
 | `analyzer.rs` | Lindera形態素解析、ホバー情報、セマンティックトークン |
 | `checker.rs` | 文法チェック（ら抜き、い抜き、二重助詞、二重敬語、冗長表現、連続文末、たり並列、の連続） |
 | `extractor.rs` | tree-sitterテキスト抽出（Markdown, Rust, Python, JS/TS, C/C++, Go） |
+| `config.rs` | 設定管理（mozuku.toml解析、環境変数対応） |
+| `llm.rs` | LLMクライアント（Claude/OpenAI API、校正プロンプト生成） |
 
 ### mozuku-lsp (C++) - レガシー
 
@@ -147,10 +151,13 @@ npm run compile
   - たり並列検出（歩いたり走る→歩いたり走ったりする）
   - の連続検出（私の友達の本の...）
   - 37個のユニットテスト（TDD実装）
-- [ ] **Phase 4: LLM 統合**
+- [x] **Phase 4: LLM 統合**
   - 設定ファイル (`mozuku.toml`) による API キー管理
-  - 非同期での LLM 問い合わせ
-  - Code Action による AI 修正の適用
+  - Claude (Anthropic) / OpenAI API 対応
+  - 環境変数による API キー設定（ANTHROPIC_API_KEY, OPENAI_API_KEY）
+  - Code Action による Quick Fix と AI 修正提案
+  - code_action_resolve による遅延評価
+  - 60個のユニットテスト
 
 ## テスト
 
